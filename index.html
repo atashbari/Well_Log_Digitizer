@@ -55,7 +55,17 @@ button,input{font:inherit;color:inherit}
 .modal-card .ai-2{color:var(--muted);font-size:12.5px;margin-top:-4px}
 .modal-x{position:absolute;top:10px;right:10px;border:0;background:none;font-size:22px;line-height:1;color:var(--muted);cursor:pointer;padding:4px 8px;border-radius:6px}
 .modal-x:hover{color:var(--ink)}
-.modal-actions{display:flex;justify-content:flex-end;margin-top:6px}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
+.alert-card{width:min(420px,100%)}
+.alert-card h2{display:flex;align-items:center;gap:10px;padding-right:0}
+.alert-icon{width:26px;height:26px;border-radius:50%;background:var(--red);color:#fff;display:grid;place-items:center;font-size:15px;font-weight:700;flex:none}
+.alert-icon.info{background:var(--frame)}
+.alert-icon.ok{background:var(--ok)}
+.alert-card.info{border-top-color:var(--frame)}
+.alert-card.ok{border-top-color:var(--ok)}
+.tips{justify-self:end;margin-top:0;font-size:12.5px;white-space:nowrap}
+#alertMsg{font-size:14.5px;margin:12px 0 16px}
+#alertBox{z-index:110}
 .bar-actions{margin-left:auto;display:flex;gap:8px}
 
 /* Buttons and inputs */
@@ -313,14 +323,23 @@ tbody tr.sel{background:var(--red-soft)}
   </div>
 </div>
 
+<div class="modal" id="alertBox" hidden role="alertdialog" aria-modal="true" aria-labelledby="alertTitle" aria-describedby="alertMsg">
+  <div class="modal-card alert-card">
+    <h2><span class="alert-icon" id="alertIcon" aria-hidden="true">!</span><span id="alertTitle">Please check</span></h2>
+    <p id="alertMsg"></p>
+    <div class="modal-actions" id="alertActions"></div>
+  </div>
+</div>
+
 <script>
 (() => {
 "use strict";
 const $ = id => document.getElementById(id);
 const stage = $('stage'), spacer = $('spacer'), cv = $('view'), ctx = cv.getContext('2d');
 const loupe = $('loupe'), lctx = loupe.getContext('2d');
-const CORNER_NAMES = ['Top-left', 'Top-right', 'Bottom-right', 'Bottom-left'];
-const CORNER_SHORT = ['TL', 'TR', 'BR', 'BL'];
+// Corners are clicked in reading order: top-left, top-right, bottom-left, bottom-right.
+const CORNER_NAMES = ['Top-left', 'Top-right', 'Bottom-left', 'Bottom-right'];
+const CORNER_SHORT = ['TL', 'TR', 'BL', 'BR'];
 
 const S = {
   original: null, base: null, name: 'well_log',
@@ -335,10 +354,60 @@ const S = {
 let flashTimer = null;
 function flash(msg, ok) {
   const f = $('flash'); f.textContent = msg; f.className = ok ? 'ok' : '';
-  clearTimeout(flashTimer); flashTimer = setTimeout(() => { f.textContent = ''; }, 4500);
+  clearTimeout(flashTimer); flashTimer = setTimeout(() => { f.textContent = ''; }, ok ? 4500 : 10000);
+  if (!ok) showAlert(msg);
 }
-const armedAt = {};
-function armed(key) { const now = Date.now(), ok = armedAt[key] && now - armedAt[key] < 6000; armedAt[key] = ok ? 0 : now; return ok; }
+/* Pop-up message box: errors get an OK button; confirmations get Cancel plus an action. */
+let alertReturn = null;
+const alertQueue = [];
+const KINDS = { error: ['!', 'Please check'], info: ['i', 'Next step'], ok: ['✓', 'Ready'] };
+function tipsOn() { const t = $('tipsOn'); return !t || t.checked; }
+// kind: 'error' (default) always pops up; 'info' and 'ok' pop up only while Pop-up tips is on.
+function showAlert(msg, opts) {
+  opts = opts || {};
+  const kind = opts.kind || 'error';
+  if (kind !== 'error' && !opts.buttons && !tipsOn()) return;
+  const box = $('alertBox'), acts = $('alertActions');
+  if (!box.hidden && !opts.buttons) {
+    // A message is already showing: queue this one so it appears after OK (skip duplicates).
+    if ($('alertMsg').textContent !== msg && !alertQueue.some(q => q.msg === msg)) alertQueue.push({ msg, opts });
+    return;
+  }
+  const [icon, title] = KINDS[kind] || KINDS.error;
+  $('alertIcon').textContent = icon; $('alertIcon').className = 'alert-icon ' + kind;
+  box.querySelector('.alert-card').className = 'modal-card alert-card ' + kind;
+  $('alertTitle').textContent = opts.title || title;
+  $('alertMsg').textContent = msg;
+  acts.innerHTML = '';
+  (opts.buttons || [{ label: 'OK', primary: true }]).forEach(b => {
+    const el = document.createElement('button');
+    el.className = 'btn' + (b.primary ? ' primary' : ''); el.textContent = b.label;
+    el.onclick = () => { closeAlert(); if (b.action) b.action(); };
+    acts.appendChild(el);
+  });
+  if (box.hidden) alertReturn = document.activeElement;
+  box.hidden = false;
+  // Focus after the current mouse event finishes, so the click that triggered the message can't steal it back.
+  setTimeout(() => { const t = acts.querySelector('.primary') || acts.lastChild; if (t && !box.hidden) t.focus(); }, 0);
+}
+function closeAlert() {
+  $('alertBox').hidden = true;
+  if (alertQueue.length) { const n = alertQueue.shift(); showAlert(n.msg, n.opts); return; }
+  if (alertReturn && alertReturn.focus && alertReturn !== document.body) alertReturn.focus();
+}
+// The calibration note pops up only when it reports a real error (not “not finished yet”).
+let lastCalShown = '';
+function announceCal() {
+  if (!S.base) return;
+  const err = calError(), c = readCal();
+  // “Not finished” = fewer than 4 corners, or a valid shape whose axis values aren’t all filled in yet.
+  // A bad corner shape counts as an error right away, even before the values are entered.
+  const pending = S.corners.length < 4 || (!!S.Hinv && ![c.xl, c.xr, c.yt, c.yb].every(Number.isFinite));
+  if (!err || pending) { lastCalShown = ''; return; }
+  if (err === lastCalShown) return;
+  lastCalShown = err;
+  showAlert(err);
+}
 function newCanvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
 function cloneCanvas(src) { const c = newCanvas(src.width, src.height); c.getContext('2d').drawImage(src, 0, 0); return c; }
 function fmt(v) {
@@ -357,9 +426,15 @@ $('file').onchange = e => loadFile(e.target.files[0]);
 ['dragleave', 'drop'].forEach(t => stage.addEventListener(t, e => { e.preventDefault(); stage.classList.remove('dragover'); }));
 stage.addEventListener('drop', e => { const f = e.dataTransfer && e.dataTransfer.files[0]; if (f) loadFile(f); });
 
-function loadFile(f) {
+function loadFile(f, force) {
   if (!f) return;
-  if (S.points.length && S.dirty && !armed('load')) { flash('You have unsaved points. Save them, or choose the image again within a few seconds to discard them.'); return; }
+  if (S.points.length && S.dirty && !force) {
+    showAlert('You have ' + S.points.length + ' unsaved points. Loading a new image will discard them.', {
+      title: 'Discard unsaved points?',
+      buttons: [{ label: 'Cancel' }, { label: 'Discard and load', primary: true, action: () => loadFile(f, true) }]
+    });
+    return;
+  }
   const url = URL.createObjectURL(f);
   const img = new Image();
   img.onload = () => {
@@ -380,6 +455,7 @@ function loadFile(f) {
   img.src = url;
 }
 function setBase(c) {
+  lastCalShown = '';
   S.base = c; S.angle = 0; syncAngle(); S.crop = null; S.aligning = false; S.alignPts = [];
   S.corners = []; S.Hinv = null; updateCal(); updateTable(); layout();
 }
@@ -511,7 +587,7 @@ function isConvex(p) {
 function computeH() {
   S.Hinv = null;
   if (S.corners.length !== 4) return;
-  const p = S.corners.map(c => [c.x, c.y]);
+  const c4 = S.corners, p = [c4[0], c4[1], c4[3], c4[2]].map(c => [c.x, c.y]); // perimeter order TL, TR, BR, BL
   if (!isConvex(p)) return;
   const M = squareToQuad(p); if (!M) return;
   S.Hinv = invert3(M);
@@ -529,7 +605,7 @@ function readCal() {
 function calError() {
   if (!S.base) return 'Load an image first.';
   if (S.corners.length < 4) return 'Set all four track corners first.';
-  if (!S.Hinv) return 'The corners don’t form a valid four-sided shape. Redo them in order: top-left, top-right, bottom-right, bottom-left.';
+  if (!S.Hinv) return 'The corners don’t form a valid four-sided shape. Redo them in order: top-left, top-right, bottom-left, bottom-right.';
   const c = readCal();
   if (![c.xl, c.xr, c.yt, c.yb].every(Number.isFinite)) return 'Enter all four axis values.';
   if (c.xl === c.xr) return 'Left and right values must be different.';
@@ -550,7 +626,7 @@ function valuesAt(x, y) {
 function updateCal() {
   computeH();
   const chips = $('chips'); chips.innerHTML = '';
-  [0, 1, 3, 2].forEach(i => {
+  [0, 1, 2, 3].forEach(i => {
     const n = CORNER_SHORT[i], s = document.createElement('span');
     s.className = 'chip' + (i < S.corners.length ? ' set' : (i === S.corners.length ? ' next' : ''));
     s.textContent = CORNER_NAMES[i]; s.title = n; chips.appendChild(s);
@@ -563,10 +639,11 @@ function updateCal() {
 }
 ['xLeft', 'xRight', 'yTop', 'yBottom', 'xName', 'yName', 'xLog', 'yLog'].forEach(id => {
   $(id).addEventListener('input', () => { updateCal(); updateTable(); render(); });
+  $(id).addEventListener('change', announceCal); // after typing is finished (Enter, Tab or clicking away)
 });
 $('redoCorners').onclick = () => {
   if (S.points.length) flash('Points stay where you clicked them; their values will follow the new corners.');
-  S.corners = []; updateCal(); updateTable(); render();
+  S.corners = []; updateCal(); updateTable(); render(); announceCal();
 };
 
 /* ---------- view / zoom ---------- */
@@ -652,8 +729,14 @@ function render() {
     const active = S.mode === 'calib';
     ctx.strokeStyle = frame; ctx.lineWidth = active ? 2 : 1.25; ctx.globalAlpha = active ? 1 : 0.7;
     ctx.beginPath();
-    S.corners.forEach((c, i) => { const [x, y] = P(c.x, c.y); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-    if (S.corners.length === 4) ctx.closePath();
+    const C = S.corners, pt = i => P(C[i].x, C[i].y);
+    if (C.length === 4) {
+      [0, 1, 3, 2].forEach((k, j) => { const [x, y] = pt(k); j ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.closePath();
+    } else {
+      if (C.length > 1) { ctx.moveTo(...pt(0)); ctx.lineTo(...pt(1)); }
+      if (C.length > 2) { ctx.moveTo(...pt(0)); ctx.lineTo(...pt(2)); }
+    }
     ctx.stroke();
     if (active) {
       ctx.font = '600 11px Archivo, Arial, sans-serif';
@@ -742,7 +825,7 @@ cv.addEventListener('pointerdown', e => {
   if (S.mode === 'calib') {
     const hit = S.corners.findIndex(c => Math.hypot(c.x - p.x, c.y - p.y) * S.zoom < 12);
     if (hit >= 0) { S.cornerDrag = hit; cv.setPointerCapture(e.pointerId); return; }
-    if (S.corners.length < 4) { S.corners.push(clampToImage(p)); updateCal(); updateTable(); render(); }
+    if (S.corners.length < 4) { S.corners.push(clampToImage(p)); updateCal(); updateTable(); render(); announceCal(); }
     else flash('All four corners are set. Drag one to adjust it, or choose Redo corners.');
     return;
   }
@@ -769,7 +852,7 @@ cv.addEventListener('pointermove', e => {
 });
 function endDrag(e) {
   if (S.cropDrag) { S.cropDrag = null; if (S.crop && (S.crop.w < 3 || S.crop.h < 3)) S.crop = null; updateCropBtns(); render(); }
-  if (S.cornerDrag >= 0) { S.cornerDrag = -1; }
+  if (S.cornerDrag >= 0) { S.cornerDrag = -1; announceCal(); }
   try { cv.releasePointerCapture(e.pointerId); } catch (_) {}
 }
 cv.addEventListener('pointerup', endDrag);
@@ -819,8 +902,15 @@ function deletePoint(i) { S.points.splice(i, 1); S.sel = Math.min(S.sel, S.point
 $('undo').onclick = () => { if (S.points.length) deletePoint(S.points.length - 1); };
 $('clearPts').onclick = () => {
   if (!S.points.length) return;
-  if (S.dirty && !armed('clear')) { flash('Click Clear all again to delete all ' + S.points.length + ' unsaved points.'); return; }
-  S.points = []; S.sel = -1; S.dirty = false; updateTable(); render();
+  const clearAll = () => { S.points = []; S.sel = -1; S.dirty = false; updateTable(); render(); };
+  if (S.dirty) {
+    showAlert('Delete all ' + S.points.length + ' points? They haven’t been saved yet.', {
+      title: 'Delete all points?',
+      buttons: [{ label: 'Cancel' }, { label: 'Delete all', primary: true, action: clearAll }]
+    });
+    return;
+  }
+  clearAll();
 };
 $('sortY').onclick = () => {
   const c = readCal(), dir = (c.yb >= c.yt) ? 1 : -1;
@@ -836,6 +926,11 @@ $('aboutBtn').onclick = openAbout; $('aboutX').onclick = closeAbout; $('aboutOk'
 about.addEventListener('click', e => { if (e.target === about) closeAbout(); });
 
 document.addEventListener('keydown', e => {
+  if (!$('alertBox').hidden) {
+    if (e.key === 'Escape') { e.preventDefault(); closeAlert(); }
+    else if (e.key === 'Enter' && !(e.target && e.target.tagName === 'BUTTON')) { e.preventDefault(); const p = $('alertActions').querySelector('.primary'); if (p) p.click(); }
+    return;
+  }
   if (!about.hidden) { if (e.key === 'Escape') { e.preventDefault(); closeAbout(); } return; }
   const tag = (e.target.tagName || '').toLowerCase();
   if (tag === 'input') return;
