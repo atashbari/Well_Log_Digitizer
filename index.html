@@ -435,7 +435,7 @@ input[type=color]{width:40px;height:28px;padding:0 2px;border:1px solid var(--li
   <div class="modal-card">
     <button class="modal-x" id="aboutX" aria-label="Close">×</button>
     <h2 id="aboutTitle">Well Log Digitizer</h2>
-    <p class="ver">Version 1.0, October 2026</p>
+    <p class="ver">Version 2.0, October 2026</p>
     <p class="credit-full">Designed by Vahid Atashbari, Geo Energy Resources Initiative, Youngstown State University.</p>
     <p>This tool converts scanned or photographed well log curves into numeric data. Load an image, straighten and crop it, mark the four corners of the track, enter the axis values, then click along the curve. Points are saved as a CSV file.</p>
     <p>The images you open are processed only in your web browser. They are never sent to a server or stored anywhere else.</p>
@@ -1604,7 +1604,7 @@ function zipStore(files) {
 function buildXlsx(out) {
   const c = readCal(), cfg = vshCfg(), esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main', RNS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
-  const head = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+  const head = '<?xml version="2.0" encoding="UTF-8" standalone="yes"?>\n';
   const sheetXml = (table, widths) => {
     let x = '';
     table.forEach((r, i) => {
