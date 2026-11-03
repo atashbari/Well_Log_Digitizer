@@ -205,6 +205,14 @@ input[type=color]{width:40px;height:28px;padding:0 2px;border:1px solid var(--li
 .seg-b.on{background:var(--red);color:#fff}
 .out-opts .row{margin:4px 0}
 #stepRow[hidden]{display:none}
+#resTable[hidden],#rawTable[hidden]{display:none}
+#resTable th,#resTable td{white-space:nowrap}
+#resTable th:first-child,#resTable td:first-child{color:var(--ink);width:auto;text-align:right;position:sticky;left:0;background:var(--surface)}
+#resTable th:first-child{background:var(--sunken);z-index:2}
+#resTable th:last-child,#resTable td:last-child{width:auto;text-align:right}
+#resTable td.txt,#resTable th:last-child:not(:first-child){text-align:left}
+#resTable td.nullv{color:var(--muted)}
+#resTable tbody tr{cursor:default}
 .out-opts select{width:auto}
 #gapBtn.on{background:var(--red);border-color:var(--red);color:#fff}
 @media (max-width:980px){
@@ -400,10 +408,11 @@ input[type=color]{width:40px;height:28px;padding:0 2px;border:1px solid var(--li
     </div>
     <div class="table-head"><h2><i class="cdot" id="ptsDot"></i><span id="ptsTitle">Points</span></h2><span id="count">0 points</span></div>
     <div class="table-scroll">
-      <table>
+      <table id="rawTable">
         <thead><tr><th>#</th><th id="thY">Y</th><th id="thX">X</th><th><span class="sr" aria-label="Delete"></span></th></tr></thead>
         <tbody id="tbody"></tbody>
       </table>
+      <table id="resTable" hidden><thead id="resHead"></thead><tbody id="resBody"></tbody></table>
     </div>
     <div class="out-opts">
       <span class="field">Data to save</span>
@@ -435,7 +444,7 @@ input[type=color]{width:40px;height:28px;padding:0 2px;border:1px solid var(--li
   <div class="modal-card">
     <button class="modal-x" id="aboutX" aria-label="Close">×</button>
     <h2 id="aboutTitle">Well Log Digitizer</h2>
-    <p class="ver">Version 2.0, October 2026</p>
+    <p class="ver">Version 2.0, November 2026</p>
     <p class="credit-full">Designed by Vahid Atashbari, Geo Energy Resources Initiative, Youngstown State University.</p>
     <p>This tool converts scanned or photographed well log curves into numeric data. Load an image, straighten and crop it, mark the four corners of the track, enter the axis values, then click along the curve. Points are saved as a CSV file.</p>
     <p>The images you open are processed only in your web browser. They are never sent to a server or stored anywhere else.</p>
@@ -1329,6 +1338,11 @@ function updateTable(scrollToEnd) {
   $('save').disabled = $('saveTop').disabled = $('copyCsv').disabled = $('saveX').disabled = $('saveXTop').disabled = !ok;
   $('clearPts').disabled = $('sortY').disabled = !n;
   $('delSel').disabled = !ns; $('delSel').textContent = ns > 1 ? 'Delete selected (' + ns + ')' : 'Delete selected';
+  // The table shows the raw points of the active curve, or the resampled data, matching "Data to save".
+  const res = saveMode() === 'res';
+  $('rawTable').hidden = res; $('resTable').hidden = !res;
+  if (res) { $('sortY').disabled = $('delSel').disabled = true; renderResTable(); }
+  else { $('ptsDot').style.display = ''; $('ptsTitle').textContent = 'Points: ' + curveName(curve()); }
   updateUndo();
   if (scrollToEnd) { const sc = document.querySelector('.table-scroll'); sc.scrollTop = sc.scrollHeight; }
   updateDone();
@@ -1521,7 +1535,7 @@ function saveMode() { return $('modeRes').classList.contains('on') ? 'res' : 'ra
 function depthUnit() { const m = /\(([^)]+)\)/.exec($('yName').value); return m ? m[1].trim() : ''; }
 function stepLabel() { const u = depthUnit(); return $('stepSel').value + (u ? ' ' + u : ''); }
 // Data for saved files. Returns null if an error was shown.
-function outputData() {
+function outputData(quiet) {
   const series = S.curves.filter(c => (c.points.length || c.gaps.length) && !calErrorFor(c));
   let cfg = vshCfg(); if (cfg && !series.includes(cfg.c)) cfg = null;
   const vshOf = x => x === NULLV ? NULLV : Number(vshCalc(x, cfg).toFixed(4));
@@ -1533,7 +1547,7 @@ function outputData() {
     const all = [].concat(...series.map(c => rawSeries(c).map(r => r.d)));
     const lo = Math.min(...all), hi = Math.max(...all);
     const start = Math.ceil(lo / step - 1e-9) * step, count = Math.floor((hi - start) / step + 1e-9) + 1;
-    if (count > 500000) { flash('Resampling every ' + stepLabel() + ' would create ' + count.toLocaleString() + ' rows. Choose a larger step.'); return null; }
+    if (count > 500000) { const m = 'Resampling every ' + stepLabel() + ' would create ' + count.toLocaleString() + ' rows. Choose a larger step.'; if (quiet) return { error: m }; flash(m); return null; }
     const sorted = series.map(sortedRowsFor), vrows = cfg ? sortedRowsFor(cfg.c) : null;
     for (let k = 0; k < count; k++) {
       const d = Number((start + k * step).toFixed(6));
@@ -1847,16 +1861,16 @@ function autoVsh(quiet) {
   if (r.length < 2) { if (!quiet) flash('Digitize at least two points on “' + curveName(c) + '” first.'); return; }
   const xs = r.map(v => v.x);
   $('vshClean').value = Number(Math.min(...xs).toPrecision(6)); $('vshShale').value = Number(Math.max(...xs).toPrecision(6));
-  vshNote(); updateDone(); render();
+  vshNote(); updateTable(); render();
 }
 function updateVshUI() {
   $('vshOpts').hidden = !vshSource();
-  vshNote(); updateDone(); render();
+  vshNote(); updateTable(); render();
 }
 $('vshSrc').onchange = () => { $('vshClean').value = ''; $('vshShale').value = ''; autoVsh(true); updateVshUI(); };
 $('vshAuto').onclick = () => autoVsh(false);
 ['vshClean', 'vshShale'].forEach(id => {
-  $(id).addEventListener('input', () => { vshNote(); updateDone(); render(); });
+  $(id).addEventListener('input', () => { vshNote(); updateTable(); render(); });
   $(id).addEventListener('change', () => {
     const a = parseFloat($('vshClean').value), b = parseFloat($('vshShale').value);
     if (Number.isFinite(a) && Number.isFinite(b) && a === b) flash('The clean and shale values must be different.');
@@ -1866,7 +1880,34 @@ $('vshAuto').onclick = () => autoVsh(false);
 function setSaveMode(res) {
   $('modeRes').classList.toggle('on', res); $('modeRaw').classList.toggle('on', !res);
   $('modeRes').setAttribute('aria-pressed', String(res)); $('modeRaw').setAttribute('aria-pressed', String(!res));
-  $('stepRow').hidden = !res; modeNote();
+  $('stepRow').hidden = !res; modeNote(); updateTable();
+}
+// Resampled view of the data panel: exactly the table that will be saved.
+const RES_MAX = 3000;
+function renderResTable() {
+  const head = $('resHead'), body = $('resBody'); head.innerHTML = ''; body.innerHTML = '';
+  $('ptsDot').style.display = 'none'; $('ptsTitle').textContent = 'Resampled every ' + stepLabel();
+  const note = (t, cols) => { const tr = document.createElement('tr'); tr.className = 'empty-row'; const td = document.createElement('td'); td.colSpan = cols || 1; td.textContent = t; tr.appendChild(td); body.appendChild(tr); };
+  const out = outputData(true);
+  if (!out || out.error || !out.series.length) {
+    note(out && out.error ? out.error : 'Resampled data appears here once points are digitized on a calibrated curve.');
+    $('count').textContent = '0 rows'; return;
+  }
+  const t = tableFor(out), hr = document.createElement('tr');
+  t[0].forEach(h => { const th = document.createElement('th'); th.textContent = h; hr.appendChild(th); }); head.appendChild(hr);
+  const n = t.length - 1, show = Math.min(n, RES_MAX), frag = document.createDocumentFragment();
+  for (let i = 1; i <= show; i++) {
+    const r = document.createElement('tr');
+    t[i].forEach(v => {
+      const td = document.createElement('td');
+      if (typeof v === 'number') { td.textContent = fmt(v); if (v === NULLV) td.className = 'nullv'; } else { td.textContent = v; td.className = 'txt'; }
+      r.appendChild(td);
+    });
+    frag.appendChild(r);
+  }
+  body.appendChild(frag);
+  if (show < n) note('Showing the first ' + show.toLocaleString() + ' of ' + n.toLocaleString() + ' rows. All rows are saved.', t[0].length);
+  $('count').textContent = n.toLocaleString() + ' rows';
 }
 function modeNote() {
   $('modeNote').textContent = saveMode() === 'res'
@@ -1880,7 +1921,7 @@ function renderStepOptions() {
 }
 $('modeRaw').onclick = () => setSaveMode(false);
 $('modeRes').onclick = () => setSaveMode(true);
-$('stepSel').onchange = modeNote;
+$('stepSel').onchange = () => { modeNote(); updateTable(); };
 $('yName').addEventListener('input', renderStepOptions);
 
 // Missing intervals (per curve)
@@ -1912,7 +1953,7 @@ function renderGaps() {
     const li = document.createElement('li'), d = document.createElement('div');
     d.className = 'zinfo'; d.textContent = fmt(g.top) + ' – ' + fmt(g.bot);
     const b = document.createElement('button'); b.className = 'del'; b.textContent = '×'; b.setAttribute('aria-label', 'Delete missing interval ' + fmt(g.top) + ' to ' + fmt(g.bot));
-    b.onclick = ev => { ev.stopPropagation(); c.gaps.splice(i, 1); S.dirty = true; renderGaps(); render(); };
+    b.onclick = ev => { ev.stopPropagation(); c.gaps.splice(i, 1); S.dirty = true; renderGaps(); updateTable(); render(); };
     li.style.cursor = 'default'; li.append(d, b); ul.appendChild(li);
   });
 }
